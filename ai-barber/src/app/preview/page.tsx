@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Loader2, Upload, RefreshCw, Download, Image as ImageIcon } from "lucide-react"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Loader2, Upload, RefreshCw, Download, Image as ImageIcon, Info } from "lucide-react"
 import { toast } from "sonner"
 import Image from "next/image"
 
@@ -19,6 +20,8 @@ export default function PreviewPage() {
 
   const [isLoading, setIsLoading] = useState(false)
   const [resultImage, setResultImage] = useState<string | null>(null)
+  const [analysisText, setAnalysisText] = useState<string | null>(null)
+  const [fallbackMessage, setFallbackMessage] = useState<string | null>(null)
 
   const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
   const ALLOWED_TYPES = ["image/jpeg", "image/jpg", "image/png"]
@@ -69,6 +72,8 @@ export default function PreviewPage() {
 
     setIsLoading(true)
     setResultImage(null)
+    setAnalysisText(null)
+    setFallbackMessage(null)
 
     try {
       const formData = new FormData()
@@ -86,8 +91,14 @@ export default function PreviewPage() {
         throw new Error(data.error || "Failed to generate preview")
       }
 
-      setResultImage(data.resultUrl)
-      toast.success("Hairstyle preview generated successfully!")
+      if (data.isAnalysis) {
+        setAnalysisText(data.analysisText)
+        setFallbackMessage(data.message)
+        toast.info("Image generation unavailable. Displaying AI analysis.")
+      } else {
+        setResultImage(data.resultUrl)
+        toast.success("Hairstyle preview generated successfully!")
+      }
     } catch (error: unknown) {
       console.error("Generation error:", error)
       const errorMessage = error instanceof Error ? error.message : "An error occurred while generating the preview."
@@ -99,13 +110,14 @@ export default function PreviewPage() {
 
   const handleReset = () => {
     setResultImage(null)
+    setAnalysisText(null)
+    setFallbackMessage(null)
   }
 
   const handleDownload = async () => {
     if (!resultImage) return
 
     try {
-      // Create a temporary link to download the image
       const a = document.createElement('a')
       a.href = resultImage
       a.download = `hairstyle-preview-${name.replace(/\s+/g, '-').toLowerCase()}.jpg`
@@ -118,10 +130,20 @@ export default function PreviewPage() {
     }
   }
 
-  if (resultImage) {
+  if (resultImage || analysisText) {
     return (
       <div className="container mx-auto py-10 px-4 max-w-5xl">
         <h1 className="text-3xl font-bold text-center mb-8">Your Hairstyle Preview</h1>
+
+        {fallbackMessage && (
+          <Alert className="mb-6 max-w-3xl mx-auto">
+            <Info className="h-4 w-4" />
+            <AlertTitle>Notice</AlertTitle>
+            <AlertDescription>
+              {fallbackMessage}
+            </AlertDescription>
+          </Alert>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <Card>
@@ -150,14 +172,22 @@ export default function PreviewPage() {
             </CardContent>
           </Card>
 
-          <Card className="border-primary shadow-lg border-2">
+          <Card className={`border-primary shadow-lg ${resultImage ? 'border-2' : ''}`}>
             <CardHeader>
-              <CardTitle className="text-center text-primary">AI Preview</CardTitle>
+              <CardTitle className="text-center text-primary">
+                {resultImage ? 'AI Preview' : 'AI Analysis'}
+              </CardTitle>
             </CardHeader>
-            <CardContent className="flex justify-center">
-              <div className="relative w-full aspect-[3/4] rounded-md overflow-hidden">
-                <Image src={resultImage} alt="Generated Preview" fill unoptimized={true} className="object-cover" />
-              </div>
+            <CardContent className="flex justify-center h-full">
+              {resultImage ? (
+                <div className="relative w-full aspect-[3/4] rounded-md overflow-hidden">
+                  <Image src={resultImage} alt="Generated Preview" fill unoptimized={true} className="object-cover" />
+                </div>
+              ) : (
+                <div className="w-full h-full p-4 bg-muted/50 rounded-md overflow-y-auto whitespace-pre-wrap text-sm leading-relaxed aspect-[3/4]">
+                  {analysisText}
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -167,10 +197,12 @@ export default function PreviewPage() {
             <RefreshCw className="mr-2 h-4 w-4" />
             Try Again
           </Button>
-          <Button onClick={handleDownload} className="w-40">
-            <Download className="mr-2 h-4 w-4" />
-            Download
-          </Button>
+          {resultImage && (
+            <Button onClick={handleDownload} className="w-40">
+              <Download className="mr-2 h-4 w-4" />
+              Download
+            </Button>
+          )}
         </div>
       </div>
     )

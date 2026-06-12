@@ -1,16 +1,11 @@
 import { NextResponse } from "next/server"
-import { Client, handle_file } from "@gradio/client"
-import { writeFile } from "fs/promises"
-import { join } from "path"
-import os from "os"
+import { GoogleGenerativeAI } from "@google/generative-ai"
 
 export const maxDuration = 60 // Increase max duration if deployed on Vercel
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: Request) {
   const startTime = Date.now()
-  let tmpSelfiePath = ""
-  let tmpReferencePath = ""
 
   console.log(`[${new Date().toISOString()}] Request received at /api/generate`)
 
@@ -27,60 +22,68 @@ export async function POST(req: Request) {
       )
     }
 
-    // Save files to /tmp
-    console.log(`[${new Date().toISOString()}] Saving files to /tmp...`)
-    const tmpDir = os.tmpdir()
-    tmpSelfiePath = join(tmpDir, `selfie-${Date.now()}-${selfie.name}`)
-    tmpReferencePath = join(tmpDir, `reference-${Date.now()}-${reference.name}`)
+    console.log(`[${new Date().toISOString()}] Preparing Gemini API call...`)
 
+    if (!process.env.GEMINI_API_KEY) {
+       console.error(`[${new Date().toISOString()}] GEMINI_API_KEY is not set.`)
+       throw new Error("API key is not configured.")
+    }
+
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
+
+    // Convert files to base64 for Gemini
     const selfieBuffer = Buffer.from(await selfie.arrayBuffer())
     const referenceBuffer = Buffer.from(await reference.arrayBuffer())
 
-    await writeFile(tmpSelfiePath, selfieBuffer)
-    await writeFile(tmpReferencePath, referenceBuffer)
-
-    console.log(`[${new Date().toISOString()}] Temp files created.`)
-    console.log(`[${new Date().toISOString()}] Selfie: ${tmpSelfiePath}`)
-    console.log(`[${new Date().toISOString()}] Reference: ${tmpReferencePath}`)
-
-    console.log(`[${new Date().toISOString()}] Connecting to Gradio API via Client.connect...`)
-    const app = await Client.connect("AIRI-Institute/HairFastGAN")
-
-    console.log(`[${new Date().toISOString()}] Invoking API /swap_hair...`)
-    const result = await app.predict("/swap_hair", {
-      face: handle_file(tmpSelfiePath),
-      shape: handle_file(tmpReferencePath),
-      color: handle_file(tmpReferencePath),
-      blending: "Article",
-      poisson_iters: 0,
-      poisson_erosion: 15,
-    }) as { data: [ { url: string }, string ] }
-
-    console.log(`[${new Date().toISOString()}] Raw API Response received:`)
-    console.log(JSON.stringify(result, null, 2))
-
-    // Parse the tuple: element 0 = generated image, element 1 = error string
-    const generatedImage = result.data[0]
-    const errorString = result.data[1]
-
-    if (errorString) {
-      console.error(`[${new Date().toISOString()}] HairFastGAN returned an error:`, errorString)
-      throw new Error(`HairFastGAN Error: ${errorString}`)
+    const selfiePart = {
+      inlineData: {
+        data: selfieBuffer.toString("base64"),
+        mimeType: selfie.type
+      }
     }
 
-    if (generatedImage && generatedImage.url) {
+    const referencePart = {
+      inlineData: {
+        data: referenceBuffer.toString("base64"),
+        mimeType: reference.type
+      }
+    }
+
+    const prompt = "The first image is a customer’s selfie. The second image is a hairstyle reference. Generate a realistic preview showing the customer with the hairstyle from the reference image while preserving facial identity, skin tone, facial features, expression, and overall appearance. Only modify the hairstyle."
+
+    try {
+      // NOTE: Standard Gemini API models (e.g. gemini-1.5-pro, gemini-1.5-flash) currently do NOT support generating images.
+      // Therefore, this request will either fail or return text. We handle the fallback here gracefully.
+      const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" })
+
+      console.log(`[${new Date().toISOString()}] Invoking Gemini model...`)
+      const result = await model.generateContent([prompt, selfiePart, referencePart])
+      const response = await result.response
+      const text = response.text()
+
+      console.log(`[${new Date().toISOString()}] Gemini response received. Analysis fallback triggered.`)
       const executionTime = Date.now() - startTime
       console.log(`[${new Date().toISOString()}] Total execution time: ${executionTime}ms`)
-      return NextResponse.json({ success: true, resultUrl: generatedImage.url })
+
+      // Fallback: Gemini cannot currently return image edits through the standard API,
+      // so we gracefully return the text analysis.
+      return NextResponse.json({
+        success: true,
+        isAnalysis: true,
+        analysisText: text,
+        message: "Image generation is currently unavailable. Displaying AI hairstyle analysis instead."
+      })
+
+    } catch (apiError: unknown) {
+      console.error(`[${new Date().toISOString()}] Gemini API error:`, apiError)
+      throw apiError
     }
 
-    console.error(`[${new Date().toISOString()}] Invalid Gradio response format:`, result)
-    throw new Error("Invalid response format from HairFastGAN API.")
   } catch (error: unknown) {
     const executionTime = Date.now() - startTime
     console.error(`[${new Date().toISOString()}] API Route Error (Execution Time: ${executionTime}ms):`, error)
 
-    const errorMessage = error instanceof Error ? error.message : "Failed to generate image."
+    const errorMessage = error instanceof Error ? error.message : "Failed to generate image or analysis."
     return NextResponse.json(
       { success: false, error: errorMessage },
       { status: 500 }
