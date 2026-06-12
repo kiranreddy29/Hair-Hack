@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { client } from "@gradio/client"
 
-export const maxDuration = 60 // Increase max duration if deployed on Vercel
+export const maxDuration = 60 
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: Request) {
@@ -20,11 +20,15 @@ export async function POST(req: Request) {
     console.log("Connecting to Gradio API...")
     const app = await client("AIRI-Institute/HairFastGAN")
 
+    // Convert Files to Blobs explicitly for safe multi-part network transmission
+    const selfieBlob = new Blob([await selfie.arrayBuffer()], { type: selfie.type })
+    const referenceBlob = new Blob([await reference.arrayBuffer()], { type: reference.type })
+
     console.log("Calling /swap_hair endpoint...")
     const result = await app.predict("/swap_hair", {
-      face: selfie,
-      shape: reference,
-      color: reference,
+      face: selfieBlob,
+      shape: referenceBlob,
+      color: referenceBlob, // Using reference image for both shape and color match
       blending: "Article",
       poisson_iters: 0,
       poisson_erosion: 15,
@@ -32,7 +36,7 @@ export async function POST(req: Request) {
 
     console.log("Gradio API call successful.")
 
-    if (result && result.data && result.data.length > 0 && result.data[0] && result.data[0].url) {
+    if (result && result.data && result.data[0]?.url) {
       return NextResponse.json({ resultUrl: result.data[0].url })
     }
 
