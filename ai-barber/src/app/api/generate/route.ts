@@ -17,10 +17,10 @@ export async function POST(req: Request) {
       )
     }
 
-    console.log("Connecting to Gradio API...")
-    const app = await client("AIRI-Institute/HairFastGAN")
+    console.log("Connecting to Gradio Mirror API...")
+    // Swapping endpoint space to an alternate functional space instance running the same interface mapping
+    const app = await client("ameerazam08/HairFastGAN")
 
-    // Convert Files to Blobs explicitly for safe multi-part network transmission
     const selfieBlob = new Blob([await selfie.arrayBuffer()], { type: selfie.type })
     const referenceBlob = new Blob([await reference.arrayBuffer()], { type: reference.type })
 
@@ -28,7 +28,7 @@ export async function POST(req: Request) {
     const result = await app.predict("/swap_hair", {
       face: selfieBlob,
       shape: referenceBlob,
-      color: referenceBlob, // Using reference image for both shape and color match
+      color: referenceBlob, 
       blending: "Article",
       poisson_iters: 0,
       poisson_erosion: 15,
