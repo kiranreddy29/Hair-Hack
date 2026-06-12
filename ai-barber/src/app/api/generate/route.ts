@@ -1,114 +1,46 @@
-import { NextResponse } from "next/server";
-import { client } from "@gradio/client";
+import { NextResponse } from "next/server"
+import { client } from "@gradio/client"
 
-export const maxDuration = 60;
-export const dynamic = "force-dynamic";
+export const maxDuration = 60 
+export const dynamic = 'force-dynamic'
+
+interface GradioOutput {
+  url?: string;
+  [key: string]: unknown;
+}
 
 export async function POST(req: Request) {
-  const startTime = Date.now();
-
   try {
-    console.log("\n==============================");
-    console.log("🚀 /api/generate called");
-    console.log("==============================");
-
-    // -----------------------------
-    // Parse form data
-    // -----------------------------
-    const formData = await req.formData();
-
-    const selfie = formData.get("selfie") as File | null;
-    const reference = formData.get("reference") as File | null;
-
-    console.log("📁 Uploaded Files:");
-    console.log({
-      selfieExists: !!selfie,
-      selfieName: selfie?.name,
-      selfieType: selfie?.type,
-      selfieSize: selfie?.size,
-
-      referenceExists: !!reference,
-      referenceName: reference?.name,
-      referenceType: reference?.type,
-      referenceSize: reference?.size,
-    });
+    const formData = await req.formData()
+    const selfie = formData.get("selfie") as File
+    const reference = formData.get("reference") as File
 
     if (!selfie || !reference) {
-      console.error("❌ Missing uploaded files");
       return NextResponse.json(
-        {
-          error: "Selfie and reference images are required.",
-        },
+        { error: "Selfie and reference images are required." },
         { status: 400 }
-      );
+      )
     }
 
-    // -----------------------------
-    // Connect to HF Space
-    // -----------------------------
-    console.log("🔌 Connecting to HairFastGAN...");
+    console.log("Connecting to the underlying Hugging Face Space runtime...")
+    const app = await client("AIRI-Institute/HairFastGAN", {})
 
-    const app = await client("AIRI-Institute/HairFastGAN");
+    const selfieBlob = new Blob([await selfie.arrayBuffer()], { type: selfie.type })
+    const referenceBlob = new Blob([await reference.arrayBuffer()], { type: reference.type })
 
-    console.log("✅ Connected successfully.");
+    console.log("Uploading files to temporary hosting nodes...")
+    /* eslint-disable @typescript-eslint/no-explicit-any */
+    const faceUpload = await app.upload([selfieBlob], "AIRI-Institute/HairFastGAN") as any
+    const shapeUpload = await app.upload([referenceBlob], "AIRI-Institute/HairFastGAN") as any
 
-    // -----------------------------
-    // Convert files
-    // -----------------------------
-    console.log("🧠 Creating blobs...");
-
-    const selfieBlob = new Blob(
-      [await selfie.arrayBuffer()],
-      { type: selfie.type }
-    );
-
-    const referenceBlob = new Blob(
-      [await reference.arrayBuffer()],
-      { type: reference.type }
-    );
-
-    console.log("✅ Blob creation complete.");
-
-    // -----------------------------
-    // Upload assets
-    // -----------------------------
-    console.log("⬆️ Uploading selfie...");
-
-    const faceUpload = await app.upload([selfieBlob]);
-
-    console.log("✅ Selfie upload result:");
-    console.dir(faceUpload, { depth: null });
-
-    console.log("⬆️ Uploading reference...");
-
-    const shapeUpload = await app.upload([referenceBlob]);
-
-    console.log("✅ Reference upload result:");
-    console.dir(shapeUpload, { depth: null });
-
-    const faceData = faceUpload?.meta?.outputs?.[0];
-    const shapeData = shapeUpload?.meta?.outputs?.[0];
-
-    console.log("📦 Parsed Upload Data:");
-    console.dir(
-      {
-        faceData,
-        shapeData,
-      },
-      { depth: null }
-    );
-
-    if (!faceData || !shapeData) {
-      throw new Error(
-        "Upload succeeded but returned invalid metadata."
-      );
+    if (!faceUpload?.meta?.outputs?.[0] || !shapeUpload?.meta?.outputs?.[0]) {
+      throw new Error("Failed to pre-stage asset uploads on the remote cluster.")
     }
 
-    // -----------------------------
-    // Predict
-    // -----------------------------
-    console.log("🤖 Starting prediction...");
+    const faceData = faceUpload.meta.outputs[0]
+    const shapeData = shapeUpload.meta.outputs[0]
 
+    console.log("Simulating native frontend interaction layer...")
     const result = await app.predict(4, [
       faceData,
       shapeData,
@@ -116,73 +48,31 @@ export async function POST(req: Request) {
       "Article",
       0,
       15,
-    ]);
+    ]) as { data: [GradioOutput, string] }
+    /* eslint-enable @typescript-eslint/no-explicit-any */
 
-    console.log("✅ Raw prediction result:");
-    console.dir(result, { depth: null });
+    console.log("Inference array response parsed.")
 
-    // -----------------------------
-    // Extract URL
-    // -----------------------------
-    const resultAny = result as any;
+    if (result && result.data && result.data.length > 0) {
+      const outputObject = result.data[0]
+      const internalErrorMessage = result.data[1]
 
-    if (resultAny?.data) {
-      console.log("📄 result.data:");
-      console.dir(resultAny.data, { depth: null });
+      if (outputObject && outputObject.url) {
+        return NextResponse.json({ resultUrl: outputObject.url })
+      }
 
-      const maybeImage = resultAny.data[0];
-
-      if (maybeImage?.url) {
-        console.log("🎉 SUCCESS");
-        console.log("Generated URL:", maybeImage.url);
-
-        console.log(
-          `⏱ Took ${(Date.now() - startTime) / 1000}s`
-        );
-
-        return NextResponse.json({
-          success: true,
-          resultUrl: maybeImage.url,
-        });
+      if (internalErrorMessage) {
+        throw new Error(`Model error: ${internalErrorMessage}`)
       }
     }
 
-    console.error("❌ Could not extract generated image.");
-
+    throw new Error("The AI backend executed successfully but returned an empty response layout.")
+  } catch (error: unknown) {
+    console.error("Critical API Route Error:", error)
+    const errorMessage = error instanceof Error ? error.message : "Internal generation pipeline error."
     return NextResponse.json(
-      {
-        success: false,
-        error: "Prediction succeeded but no image URL found.",
-        raw: resultAny,
-      },
-      {
-        status: 500,
-      }
-    );
-  } catch (err: any) {
-    console.error("\n==============================");
-    console.error("💥 API ERROR");
-    console.error("==============================");
-
-    console.error(err);
-
-    if (err?.stack) {
-      console.error(err.stack);
-    }
-
-    return NextResponse.json(
-      {
-        success: false,
-        error: err?.message ?? "Unknown error",
-      },
-      {
-        status: 500,
-      }
-    );
-  } finally {
-    console.log(
-      `🏁 Finished in ${(Date.now() - startTime) / 1000}s`
-    );
-    console.log("==============================\n");
+      { error: errorMessage },
+      { status: 500 }
+    )
   }
 }
