@@ -19,7 +19,7 @@ export async function POST(req: Request) {
 
     console.log("Connecting to Gradio Mirror API...")
     // Swapping endpoint space to an alternate functional space instance running the same interface mapping
-    const app = await client("ameerazam08/HairFastGAN")
+    const app = await client("vladimirv/HairFastGAN")
 
     const selfieBlob = new Blob([await selfie.arrayBuffer()], { type: selfie.type })
     const referenceBlob = new Blob([await reference.arrayBuffer()], { type: reference.type })
