@@ -20,21 +20,25 @@ export async function POST(req: Request) {
     console.log("Connecting directly to the official HairFastGAN API...")
     const app = await client("AIRI-Institute/HairFastGAN")
 
-    const selfieBlob = new Blob([await selfie.arrayBuffer()], { type: selfie.type })
-    const referenceBlob = new Blob([await reference.arrayBuffer()], { type: reference.type })
+    // Convert file buffers into Base64 Data URLs which are safer for Gradio over the web
+    const selfieBuffer = await selfie.arrayBuffer()
+    const referenceBuffer = await reference.arrayBuffer()
 
-    console.log("Calling /swap_hair endpoint with the 6 official parameters...")
+    const selfieBase64 = `data:${selfie.type};base64,${Buffer.from(selfieBuffer).toString("base64")}`
+    const referenceBase64 = `data:${reference.type};base64,${Buffer.from(referenceBuffer).toString("base64")}`
+
+    console.log("Calling /swap_hair endpoint using base64 payloads...")
     
     const result = await app.predict("/swap_hair", {
-      face: selfieBlob,
-      shape: referenceBlob,
-      color: referenceBlob,
+      face: selfieBase64,
+      shape: referenceBase64,
+      color: referenceBase64,
       blending: "Article",
       poisson_iters: 0,
       poisson_erosion: 15,
     }) as { data: [string, string] }
 
-    console.log("Gradio API response received:", result)
+    console.log("Gradio API response received.")
 
     if (result && result.data && result.data.length > 0) {
       const generatedImagePath = result.data[0]
