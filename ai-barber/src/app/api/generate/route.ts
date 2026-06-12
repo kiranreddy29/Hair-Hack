@@ -52,9 +52,9 @@ export async function POST(req: Request) {
     const prompt = "The first image is a customer’s selfie. The second image is a hairstyle reference. Generate a realistic preview showing the customer with the hairstyle from the reference image while preserving facial identity, skin tone, facial features, expression, and overall appearance. Only modify the hairstyle."
 
     try {
-      // NOTE: Standard Gemini API models (e.g. gemini-1.5-pro, gemini-1.5-flash) currently do NOT support generating images.
+      // NOTE: Standard Gemini API models (e.g. gemini-2.5-flash, gemini-1.5-flash) currently do NOT support generating images.
       // Therefore, this request will either fail or return text. We handle the fallback here gracefully.
-      const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" })
+      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" })
 
       console.log(`[${new Date().toISOString()}] Invoking Gemini model...`)
       const result = await model.generateContent([prompt, selfiePart, referencePart])
