@@ -1,77 +1,88 @@
 import { NextResponse } from "next/server"
-import { client } from "@gradio/client"
+import { Client, handle_file } from "@gradio/client"
+import { writeFile } from "fs/promises"
+import { join } from "path"
+import os from "os"
 
-export const maxDuration = 60 
+export const maxDuration = 60 // Increase max duration if deployed on Vercel
 export const dynamic = 'force-dynamic'
 
-interface GradioOutput {
-  url?: string;
-  [key: string]: unknown;
-}
-
 export async function POST(req: Request) {
+  const startTime = Date.now()
+  let tmpSelfiePath = ""
+  let tmpReferencePath = ""
+
+  console.log(`[${new Date().toISOString()}] Request received at /api/generate`)
+
   try {
     const formData = await req.formData()
     const selfie = formData.get("selfie") as File
     const reference = formData.get("reference") as File
 
     if (!selfie || !reference) {
+      console.log(`[${new Date().toISOString()}] Error: Missing files in request.`)
       return NextResponse.json(
-        { error: "Selfie and reference images are required." },
+        { success: false, error: "Selfie and reference images are required." },
         { status: 400 }
       )
     }
 
-    console.log("Connecting to the underlying Hugging Face Space runtime...")
-    const app = await client("AIRI-Institute/HairFastGAN", {})
+    // Save files to /tmp
+    console.log(`[${new Date().toISOString()}] Saving files to /tmp...`)
+    const tmpDir = os.tmpdir()
+    tmpSelfiePath = join(tmpDir, `selfie-${Date.now()}-${selfie.name}`)
+    tmpReferencePath = join(tmpDir, `reference-${Date.now()}-${reference.name}`)
 
-    const selfieBlob = new Blob([await selfie.arrayBuffer()], { type: selfie.type })
-    const referenceBlob = new Blob([await reference.arrayBuffer()], { type: reference.type })
+    const selfieBuffer = Buffer.from(await selfie.arrayBuffer())
+    const referenceBuffer = Buffer.from(await reference.arrayBuffer())
 
-    console.log("Uploading files to temporary hosting nodes...")
-    /* eslint-disable @typescript-eslint/no-explicit-any */
-    const faceUpload = await app.upload([selfieBlob], "AIRI-Institute/HairFastGAN") as any
-    const shapeUpload = await app.upload([referenceBlob], "AIRI-Institute/HairFastGAN") as any
+    await writeFile(tmpSelfiePath, selfieBuffer)
+    await writeFile(tmpReferencePath, referenceBuffer)
 
-    if (!faceUpload?.meta?.outputs?.[0] || !shapeUpload?.meta?.outputs?.[0]) {
-      throw new Error("Failed to pre-stage asset uploads on the remote cluster.")
+    console.log(`[${new Date().toISOString()}] Temp files created.`)
+    console.log(`[${new Date().toISOString()}] Selfie: ${tmpSelfiePath}`)
+    console.log(`[${new Date().toISOString()}] Reference: ${tmpReferencePath}`)
+
+    console.log(`[${new Date().toISOString()}] Connecting to Gradio API via Client.connect...`)
+    const app = await Client.connect("AIRI-Institute/HairFastGAN")
+
+    console.log(`[${new Date().toISOString()}] Invoking API /swap_hair...`)
+    const result = await app.predict("/swap_hair", {
+      face: handle_file(tmpSelfiePath),
+      shape: handle_file(tmpReferencePath),
+      color: handle_file(tmpReferencePath),
+      blending: "Article",
+      poisson_iters: 0,
+      poisson_erosion: 15,
+    }) as { data: [ { url: string }, string ] }
+
+    console.log(`[${new Date().toISOString()}] Raw API Response received:`)
+    console.log(JSON.stringify(result, null, 2))
+
+    // Parse the tuple: element 0 = generated image, element 1 = error string
+    const generatedImage = result.data[0]
+    const errorString = result.data[1]
+
+    if (errorString) {
+      console.error(`[${new Date().toISOString()}] HairFastGAN returned an error:`, errorString)
+      throw new Error(`HairFastGAN Error: ${errorString}`)
     }
 
-    const faceData = faceUpload.meta.outputs[0]
-    const shapeData = shapeUpload.meta.outputs[0]
-
-    console.log("Simulating native frontend interaction layer...")
-    const result = await app.predict(4, [
-      faceData,
-      shapeData,
-      shapeData,
-      "Article",
-      0,
-      15,
-    ]) as { data: [GradioOutput, string] }
-    /* eslint-enable @typescript-eslint/no-explicit-any */
-
-    console.log("Inference array response parsed.")
-
-    if (result && result.data && result.data.length > 0) {
-      const outputObject = result.data[0]
-      const internalErrorMessage = result.data[1]
-
-      if (outputObject && outputObject.url) {
-        return NextResponse.json({ resultUrl: outputObject.url })
-      }
-
-      if (internalErrorMessage) {
-        throw new Error(`Model error: ${internalErrorMessage}`)
-      }
+    if (generatedImage && generatedImage.url) {
+      const executionTime = Date.now() - startTime
+      console.log(`[${new Date().toISOString()}] Total execution time: ${executionTime}ms`)
+      return NextResponse.json({ success: true, resultUrl: generatedImage.url })
     }
 
-    throw new Error("The AI backend executed successfully but returned an empty response layout.")
+    console.error(`[${new Date().toISOString()}] Invalid Gradio response format:`, result)
+    throw new Error("Invalid response format from HairFastGAN API.")
   } catch (error: unknown) {
-    console.error("Critical API Route Error:", error)
-    const errorMessage = error instanceof Error ? error.message : "Internal generation pipeline error."
+    const executionTime = Date.now() - startTime
+    console.error(`[${new Date().toISOString()}] API Route Error (Execution Time: ${executionTime}ms):`, error)
+
+    const errorMessage = error instanceof Error ? error.message : "Failed to generate image."
     return NextResponse.json(
-      { error: errorMessage },
+      { success: false, error: errorMessage },
       { status: 500 }
     )
   }

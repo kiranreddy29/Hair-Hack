@@ -82,7 +82,7 @@ export default function PreviewPage() {
 
       const data = await response.json()
 
-      if (!response.ok) {
+      if (!data.success || !response.ok) {
         throw new Error(data.error || "Failed to generate preview")
       }
 
